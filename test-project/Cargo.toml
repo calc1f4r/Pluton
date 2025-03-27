@@ -1,0 +1,23 @@
+[package]
+name = "vulnerability-demo"
+version = "0.1.0"
+description = "A demo Solana program with intentional vulnerabilities for testing the static analyzer"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dependencies]
+anchor-lang = "0.28.0"
+anchor-spl = "0.28.0"
+solana-program = "1.16.0"
+
+[profile.release]
+overflow-checks = false  # Intentionally disabled for vulnerability demo
