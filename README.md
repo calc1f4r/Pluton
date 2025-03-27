@@ -1,4 +1,4 @@
-# Solana Static Analyzer
+# Pluton
 
 A static analyzer for Solana programs that detects common security vulnerabilities and provides suggestions for fixing them.
 

@@ -154,14 +154,10 @@ impl<'ast> AnchorVisitor<'ast> {
     ///
     /// * `span` - The syntax node span from which to extract location information
     fn update_location_from_span(&mut self, span: proc_macro2::Span) {
-        // The proc_macro2::Span doesn't provide line/column information
-        // in proc_macro2's stable API, but we can still update the file name
-        // This is a stub implementation - in a real implementation you might use
-        // an unstable feature or a different approach to get line/column info
-        
-        // For now, we'll just leave it as a stub that doesn't use the span
-        // but doesn't warn about unused variables
-        let _ = span;
+        // For now, we'll use a simple counter approach
+        // In a real implementation, we would need to track file positions
+        self.current_line += 1;
+        self.current_column = 1;
     }
 
     // MARK: - Function Analysis Methods
