@@ -77,36 +77,118 @@ fn main() -> anyhow::Result<()> {
         }
     } else if has_findings {
         // Default behavior: only print issues with line numbers to the terminal
-        // No headers or additional text, just the issues
+        // Group issues by severity and type
+        let mut critical_issues = Vec::new();
+        let mut high_issues = Vec::new();
+        let mut medium_issues = Vec::new();
+        let mut low_issues = Vec::new();
+        let mut warnings = Vec::new();
+
+        // Collect issues by severity
         for vuln in &result.vulnerabilities {
-            // Skip vulnerabilities from target directory
             if !vuln.location.file.contains("/target/") {
-                let severity_str = match vuln.severity {
-                    pluton::Severity::Critical => "[CRITICAL]".red().bold().to_string(),
-                    pluton::Severity::High => "[HIGH]".red().to_string(),
-                    pluton::Severity::Medium => "[MEDIUM]".yellow().to_string(),
-                    pluton::Severity::Low => "[LOW]".blue().to_string(),
-                };
-                
-                println!("{} {} ({}:{})", 
-                    severity_str,
-                    vuln.description, 
-                    vuln.location.file, 
-                    vuln.location.line);
+                match vuln.severity {
+                    pluton::Severity::Critical => critical_issues.push(vuln),
+                    pluton::Severity::High => high_issues.push(vuln),
+                    pluton::Severity::Medium => medium_issues.push(vuln),
+                    pluton::Severity::Low => low_issues.push(vuln),
+                }
             }
         }
-        
+
+        // Collect warnings
         for warning in &result.warnings {
-            // Skip warnings from generated files and build artifacts
             if !warning.location.file.contains("/target/") && 
                !warning.location.file.contains("/build/") &&
                !warning.location.file.contains("/out/") &&
                !warning.location.file.contains("/generated/") {
-                println!("[WARNING] {} ({}:{})", 
-                    warning.description, 
-                    warning.location.file, 
-                    warning.location.line);
+                warnings.push(warning);
             }
+        }
+
+        // Print issues grouped by severity
+        if !critical_issues.is_empty() {
+            println!("{}", "CRITICAL SECURITY ISSUES:".bright_red().bold());
+            for issue in critical_issues {
+                let line_display = if issue.location.line > 0 {
+                    issue.location.line.to_string()
+                } else {
+                    "unknown line".to_string() 
+                };
+                
+                println!("  • {} ({}:{})", 
+                    issue.description, 
+                    issue.location.file,
+                    line_display);
+                println!("    {}", issue.suggestion);
+            }
+            println!();
+        }
+
+        if !high_issues.is_empty() {
+            println!("{}", "HIGH RISK ISSUES:".red().bold());
+            for issue in high_issues {
+                let line_display = if issue.location.line > 0 {
+                    issue.location.line.to_string()
+                } else {
+                    "unknown line".to_string() 
+                };
+                
+                println!("  • {} ({}:{})", 
+                    issue.description, 
+                    issue.location.file,
+                    line_display);
+                println!("    {}", issue.suggestion);
+            }
+            println!();
+        }
+
+        if !medium_issues.is_empty() {
+            println!("{}", "MEDIUM RISK ISSUES:".yellow().bold());
+            for issue in medium_issues {
+                let line_display = if issue.location.line > 0 {
+                    issue.location.line.to_string()
+                } else {
+                    "unknown line".to_string() 
+                };
+                
+                println!("  • {} ({}:{})", 
+                    issue.description, 
+                    issue.location.file,
+                    line_display);
+                println!("    {}", issue.suggestion);
+            }
+            println!();
+        }
+
+        if !low_issues.is_empty() {
+            println!("{}", "LOW RISK ISSUES:".blue());
+            for vuln in low_issues {
+                println!("  • {} ({}:{})\n    {}", 
+                    vuln.description, 
+                    vuln.location.file, 
+                    vuln.location.line,
+                    vuln.suggestion.bright_black());
+            }
+            println!();
+        }
+
+        if !warnings.is_empty() {
+            println!("{}", "CODE QUALITY WARNINGS:".blue().bold());
+            for warning in warnings {
+                let line_display = if warning.location.line > 0 {
+                    warning.location.line.to_string()
+                } else {
+                    "unknown line".to_string() 
+                };
+                
+                println!("  • {} ({}:{})", 
+                    warning.description, 
+                    warning.location.file,
+                    line_display);
+                println!("    {}", warning.suggestion);
+            }
+            println!();
         }
     } else {
         // If no issues found, print a message

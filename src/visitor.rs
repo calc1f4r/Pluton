@@ -32,6 +32,8 @@ use syn::{
     BinOp, Expr, ExprBinary, ExprLit, Field, Item, ItemEnum, ItemFn, ItemStruct
 };
 use syn::visit::Visit;
+use std::collections::HashMap;
+use std::hash::Hash;
 
 /// Visitor that traverses a Solana/Anchor program's AST to detect vulnerabilities
 ///
@@ -61,6 +63,12 @@ pub struct AnchorVisitor<'ast> {
     
     /// Tracks if we're currently analyzing an initialization function
     current_function_is_init: bool,
+
+    /// Content of the current file being analyzed
+    file_content: String,
+    
+    /// Pre-computed map of node text to line numbers
+    node_line_map: HashMap<String, usize>,
 }
 
 impl<'ast> AnchorVisitor<'ast> {
@@ -80,6 +88,15 @@ impl<'ast> AnchorVisitor<'ast> {
         current_file: String,
         has_overflow_checks: bool,
     ) -> Self {
+        // Read the file content
+        let file_content = match std::fs::read_to_string(&current_file) {
+            Ok(content) => content,
+            Err(_) => String::new(),
+        };
+        
+        // Pre-compute line numbers for common code constructs
+        let node_line_map = Self::build_line_map(&file_content);
+        
         Self {
             result,
             current_file,
@@ -89,11 +106,137 @@ impl<'ast> AnchorVisitor<'ast> {
             has_remaining_accounts_access: false,
             has_remaining_accounts_validation: false,
             current_function_is_init: false,
+            file_content,
+            node_line_map,
         }
     }
 
-    // MARK: - Result Collection Methods
+    /// Builds a map from code snippets to their line numbers
+    fn build_line_map(content: &str) -> HashMap<String, usize> {
+        let mut map = HashMap::new();
+        
+        // Process line by line to build a map of code snippets to line numbers
+        for (line_idx, line) in content.lines().enumerate() {
+            // Skip empty or whitespace-only lines
+            if line.trim().is_empty() {
+                continue;
+            }
+            
+            // For each non-empty line, add multiple partial snippets to improve matching
+            let line_trimmed = line.trim();
+            
+            // Add the full line
+            map.insert(line_trimmed.to_string(), line_idx + 1);
+            
+            // Add function declarations
+            if line_trimmed.contains("fn ") && line_trimmed.contains("(") {
+                if let Some(fn_part) = line_trimmed.split("fn ").nth(1) {
+                    if let Some(name_part) = fn_part.split('(').next() {
+                        let fn_name = name_part.trim().to_string();
+                        if !fn_name.is_empty() {
+                            map.insert(fn_name, line_idx + 1);
+                        }
+                    }
+                }
+            }
+            
+            // Add struct declarations
+            if line_trimmed.contains("struct ") {
+                if let Some(struct_part) = line_trimmed.split("struct ").nth(1) {
+                    if let Some(name_part) = struct_part.split('{').next() {
+                        let struct_name = name_part.trim().to_string();
+                        if !struct_name.is_empty() {
+                            map.insert(struct_name, line_idx + 1);
+                        }
+                    }
+                }
+            }
+            
+            // Add field declarations
+            if line_trimmed.contains(":") && !line_trimmed.contains("fn ") {
+                if let Some(field_name) = line_trimmed.split(':').next() {
+                    let field_name_trimmed = field_name.trim().to_string();
+                    if !field_name_trimmed.is_empty() {
+                        map.insert(field_name_trimmed, line_idx + 1);
+                    }
+                }
+            }
+            
+            // Add binary operations
+            if line_trimmed.contains('+') || line_trimmed.contains('-') || 
+               line_trimmed.contains('*') || line_trimmed.contains('/') ||
+               line_trimmed.contains('%') {
+                map.insert(line_trimmed.to_string(), line_idx + 1);
+            }
+            
+            // Add literal expressions
+            if line_trimmed.contains("0x") || line_trimmed.chars().any(|c| c.is_digit(10)) {
+                map.insert(line_trimmed.to_string(), line_idx + 1);
+            }
+            
+            // Extract tokens to capture more granular code elements
+            let tokens: Vec<&str> = line_trimmed
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .filter(|s| !s.is_empty() && s.len() > 2)
+                .collect();
+            
+            for token in tokens {
+                map.insert(token.to_string(), line_idx + 1);
+            }
+        }
+        
+        map
+    }
+    
+    /// Updates the current source location based on a syntax node's span
+    fn update_location_from_span(&mut self, span: proc_macro2::Span) {
+        // First try to get the source text
+        if let Some(source_text) = span.source_text() {
+            // Ignore empty spans
+            if source_text.is_empty() || source_text.trim().is_empty() {
+                return;
+            }
+            
+            // Try direct lookup in the node map first (the efficient approach)
+            let trimmed_text = source_text.trim();
+            if let Some(&line) = self.node_line_map.get(trimmed_text) {
+                self.current_line = line;
+                self.current_column = 1; // Default column since we don't track exact columns
+                return;
+            }
+            
+            // Try looking up parts of the source text (handles complex expressions)
+            let parts: Vec<&str> = trimmed_text
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .filter(|s| !s.is_empty() && s.len() > 2)
+                .collect();
+                
+            for part in parts {
+                if let Some(&line) = self.node_line_map.get(part) {
+                    self.current_line = line;
+                    self.current_column = 1;
+                    return;
+                }
+            }
+            
+            // If we still can't find it, use the text search method as fallback
+            if let Some(pos) = self.file_content.find(trimmed_text) {
+                // Count newlines up to this position
+                let prefix = &self.file_content[..pos];
+                self.current_line = prefix.matches('\n').count() + 1;
+                
+                // Calculate column
+                if let Some(last_newline) = prefix.rfind('\n') {
+                    self.current_column = pos - last_newline;
+                } else {
+                    self.current_column = pos + 1;
+                }
+            }
+        }
+    }
 
+    // MARK: - Location Tracking Methods
+    
     /// Adds a vulnerability finding to the analysis result
     ///
     /// # Arguments
@@ -102,6 +245,20 @@ impl<'ast> AnchorVisitor<'ast> {
     /// * `description` - Description of the vulnerability
     /// * `suggestion` - Suggested fix for the vulnerability
     fn add_vulnerability(&mut self, severity: Severity, description: String, suggestion: String) {
+        // Ensure we have a line number
+        if self.current_line == 0 {
+            // Try to find a line based on the description
+            if let Some(keyword) = description.split_whitespace().next() {
+                if let Some(pos) = self.file_content.find(keyword) {
+                    let prefix = &self.file_content[..pos];
+                    self.current_line = prefix.matches('\n').count() + 1;
+                } else {
+                    // Use fallback line number - by default use line 1, but this should be rare
+                    self.current_line = 1;
+                }
+            }
+        }
+        
         self.result.vulnerabilities.push(Vulnerability {
             severity,
             description,
@@ -121,6 +278,20 @@ impl<'ast> AnchorVisitor<'ast> {
     /// * `description` - Description of the warning
     /// * `suggestion` - Suggested improvement
     fn add_warning(&mut self, description: String, suggestion: String) {
+        // Ensure we have a line number
+        if self.current_line == 0 {
+            // Try to find a line based on the description
+            if let Some(keyword) = description.split_whitespace().next() {
+                if let Some(pos) = self.file_content.find(keyword) {
+                    let prefix = &self.file_content[..pos];
+                    self.current_line = prefix.matches('\n').count() + 1;
+                } else {
+                    // Use fallback line number
+                    self.current_line = 1;
+                }
+            }
+        }
+        
         self.result.warnings.push(Warning {
             description,
             location: Location {
@@ -138,6 +309,20 @@ impl<'ast> AnchorVisitor<'ast> {
     ///
     /// * `description` - Description of the informational item
     fn add_info(&mut self, description: String) {
+        // Ensure we have a line number
+        if self.current_line == 0 {
+            // Try to find a line based on the description
+            if let Some(keyword) = description.split_whitespace().next() {
+                if let Some(pos) = self.file_content.find(keyword) {
+                    let prefix = &self.file_content[..pos];
+                    self.current_line = prefix.matches('\n').count() + 1;
+                } else {
+                    // Use fallback line number
+                    self.current_line = 1;
+                }
+            }
+        }
+        
         self.result.info.push(Info {
             description,
             location: Location {
@@ -146,18 +331,6 @@ impl<'ast> AnchorVisitor<'ast> {
                 column: self.current_column,
             },
         });
-    }
-
-    /// Updates the current source location based on a syntax node's span
-    ///
-    /// # Arguments
-    ///
-    /// * `span` - The syntax node span from which to extract location information
-    fn update_location_from_span(&mut self, span: proc_macro2::Span) {
-        // For now, we'll use a simple counter approach
-        // In a real implementation, we would need to track file positions
-        self.current_line += 1;
-        self.current_column = 1;
     }
 
     // MARK: - Function Analysis Methods
@@ -178,12 +351,25 @@ impl<'ast> AnchorVisitor<'ast> {
         // Update location from function span
         self.update_location_from_span(item_fn.span());
         
-        // Reset state for this function
-        self.has_remaining_accounts_access = false;
-        self.has_remaining_accounts_validation = false;
+        // Update location from function name span if available
+        self.update_location_from_span(item_fn.sig.ident.span());
         
         // Get function name for heuristic checks
         let fn_name = item_fn.sig.ident.to_string();
+        
+        // Force line numbers for specific constructs
+        if self.current_line == 0 {
+            // Look in the code for the function definition directly
+            let pattern = format!("fn {}(", fn_name);
+            if let Some(pos) = self.file_content.find(&pattern) {
+                let prefix = &self.file_content[..pos];
+                self.current_line = prefix.matches('\n').count() + 1;
+            }
+        }
+        
+        // Reset state for this function
+        self.has_remaining_accounts_access = false;
+        self.has_remaining_accounts_validation = false;
         
         // Check if this is an initialization function based on naming convention
         self.current_function_is_init = fn_name.contains("initialize") 
@@ -282,8 +468,21 @@ impl<'ast> AnchorVisitor<'ast> {
         // Update location from struct span
         self.update_location_from_span(item_struct.span());
         
+        // Update location from struct name span if available
+        self.update_location_from_span(item_struct.ident.span());
+        
         // Get struct name for pattern matching
         let struct_name = item_struct.ident.to_string();
+        
+        // Force line numbers for specific constructs
+        if self.current_line == 0 {
+            // Look in the code for the struct definition directly
+            let pattern = format!("struct {}", struct_name);
+            if let Some(pos) = self.file_content.find(&pattern) {
+                let prefix = &self.file_content[..pos];
+                self.current_line = prefix.matches('\n').count() + 1;
+            }
+        }
         
         // Check if this is an Anchor Accounts struct
         let is_accounts_struct = item_struct.attrs.iter().any(|attr| {
@@ -358,6 +557,24 @@ impl<'ast> AnchorVisitor<'ast> {
         let field_name = field.ident
             .as_ref()
             .map_or("unnamed".to_string(), |id| id.to_string());
+            
+        // Force line numbers for specific fields
+        if self.current_line == 0 && !field_name.is_empty() {
+            // Look for field declarations with matching name
+            let patterns = vec![
+                format!("{}: ", field_name),
+                format!("pub {}: ", field_name),
+                format!("{},", field_name),
+            ];
+            
+            for pattern in patterns {
+                if let Some(pos) = self.file_content.find(&pattern) {
+                    let prefix = &self.file_content[..pos];
+                    self.current_line = prefix.matches('\n').count() + 1;
+                    break;
+                }
+            }
+        }
         
         // Check for different account types
         self.check_account_info_field(field, &field_type, &field_name, struct_name);
