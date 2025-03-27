@@ -1,0 +1,26 @@
+{
+  "title": "Loss of Precision",
+  "severity": "Medium",
+  "description": "Loss of precision vulnerabilities occur when mathematical operations, especially division, lead to a loss of precision that can affect the accuracy of financial calculations. In blockchain applications where precision is crucial for maintaining fairness and expected behavior, these seemingly minor errors can accumulate and lead to significant fund loss or unintended behavior over time. Common causes include performing division before multiplication, using integer division where floating-point precision is needed, or not accounting for rounding errors in calculations.",
+  "subtypes": [
+    {
+      "name": "Multiplication After Division",
+      "description": "When division is performed before multiplication in a calculation, precision might be lost because the division operation may truncate or round the result. This truncation error is then magnified by the subsequent multiplication operation.",
+      "insecure_example": "// Calculate 30% of the total amount\nlet total_amount = 1000;\nlet percentage = 30;\n\n// Incorrect: Division before multiplication\nlet result = (total_amount / 100) * percentage; // 10 * 30 = 300",
+      "secure_example": "// Calculate 30% of the total amount\nlet total_amount = 1000;\nlet percentage = 30;\n\n// Correct: Multiplication before division\nlet result = (total_amount * percentage) / 100; // 30000 / 100 = 300"
+    },
+    {
+      "name": "Rounding Errors",
+      "description": "Even when calculations are performed in the correct order, rounding errors can still occur in integer division. These errors can accumulate over many transactions or operations, leading to significant discrepancies.",
+      "insecure_example": "// Divide 10 tokens among 3 recipients\nlet tokens = 10;\nlet recipients = 3;\n\n// Each recipient gets the same amount (truncated)\nlet amount_per_recipient = tokens / recipients; // 3\n// Total distributed: 3 * 3 = 9, 1 token remains undistributed",
+      "secure_example": "// Divide 10 tokens among 3 recipients\nlet tokens = 10;\nlet recipients = 3;\n\n// Distribute tokens one by one to ensure fairness\nlet mut remaining_tokens = tokens;\nlet mut distribution = [0, 0, 0];\n\nfor i in 0..recipients {\n    distribution[i] = remaining_tokens / (recipients - i);\n    remaining_tokens -= distribution[i];\n}\n// Distribution: [4, 3, 3], Total: 10"
+    },
+    {
+      "name": "Saturation Operations",
+      "description": "Saturating operations prevent overflow or underflow by clamping values to the maximum or minimum values of the data type. While this prevents certain vulnerabilities, it can lead to unexpected behavior if not handled correctly.",
+      "insecure_example": "// Using saturating operations without understanding the implications\nlet max_value = u64::MAX;\nlet increment = 1;\n\n// This will not overflow, but will silently remain at the maximum value\nlet new_value = max_value.saturating_add(increment); // still u64::MAX",
+      "secure_example": "// Check if operation would saturate before proceeding\nlet max_value = u64::MAX;\nlet increment = 1;\n\nif max_value.checked_add(increment).is_none() {\n    // Handle the potential overflow explicitly\n    return Err(ProgramError::InvalidArgument);\n}\n\n// Or use saturating_add if this behavior is acceptable in your use case\nlet new_value = max_value.saturating_add(increment);"
+    }
+  ],
+  "mitigation": "To mitigate loss of precision vulnerabilities, follow these best practices:\n\n1. Always perform multiplication before division in calculations (when possible)\n2. Use fixed-point arithmetic or higher precision types for financial calculations\n3. Be aware of the potential for rounding errors and account for them in your code\n4. Consider using checked arithmetic operations to detect and handle potential issues\n5. For distributions (like dividing tokens among recipients), consider algorithms that fairly allocate resources without loss\n6. Document any assumptions about precision and rounding behavior in your code"
+}

@@ -1,0 +1,1 @@
+std::result::Result<HashMap<std::string::String, Value>, AnalyzerError>

@@ -1,0 +1,1 @@
+/home/calc1f4r/solana-static-analyzer/target/debug/solana-static-analyzer: /home/calc1f4r/solana-static-analyzer/src/error.rs /home/calc1f4r/solana-static-analyzer/src/lib.rs /home/calc1f4r/solana-static-analyzer/src/main.rs /home/calc1f4r/solana-static-analyzer/src/utils.rs /home/calc1f4r/solana-static-analyzer/src/visitor.rs

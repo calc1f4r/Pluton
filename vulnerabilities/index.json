@@ -1,0 +1,83 @@
+{
+  "title": "Solana Smart Contract Vulnerabilities",
+  "description": "A comprehensive collection of common security vulnerabilities in Solana smart contracts, with examples and mitigation strategies.",
+  "version": "1.0.0",
+  "vulnerabilities": [
+    {
+      "id": "account_data_matching",
+      "title": "Account Data Matching",
+      "severity": "High",
+      "description": "Failure to check that account data matches expected values"
+    },
+    {
+      "id": "account_data_reallocation",
+      "title": "Account Data Reallocation",
+      "severity": "Critical",
+      "description": "Improper validation during memory reallocation"
+    },
+    {
+      "id": "missing_ownership_check",
+      "title": "Missing Ownership Check",
+      "severity": "Critical",
+      "description": "Failure to verify account ownership before processing"
+    },
+    {
+      "id": "missing_signer_check",
+      "title": "Missing Signer Check",
+      "severity": "Critical",
+      "description": "Failure to verify transaction signatures for authorization"
+    },
+    {
+      "id": "type_cosplay",
+      "title": "Type Cosplay",
+      "severity": "High",
+      "description": "Misrepresentation of account types during deserialization"
+    },
+    {
+      "id": "overflow_underflow",
+      "title": "Overflow and Underflow",
+      "severity": "High",
+      "description": "Arithmetic operations exceeding data type limits"
+    },
+    {
+      "id": "insecure_initialization",
+      "title": "Insecure Initialization",
+      "severity": "Critical",
+      "description": "Improper account initialization or reinitialization checks"
+    },
+    {
+      "id": "seed_collisions",
+      "title": "Seed Collisions",
+      "severity": "High",
+      "description": "Different seed inputs generating the same PDA"
+    },
+    {
+      "id": "remaining_accounts",
+      "title": "Remaining Accounts",
+      "severity": "High",
+      "description": "Improper validation of accounts in the remaining_accounts vector"
+    },
+    {
+      "id": "bump_seed_canonicalization",
+      "title": "Bump Seed Canonicalization",
+      "severity": "High",
+      "description": "Using attacker-supplied bump seeds instead of canonical ones"
+    },
+    {
+      "id": "loss_of_precision",
+      "title": "Loss of Precision",
+      "severity": "Medium",
+      "description": "Precision loss in mathematical operations affecting calculations"
+    }
+  ],
+  "references": [
+    {
+      "name": "Helius: A Hitchhiker's Guide to Solana Program Security",
+      "url": "https://www.helius.dev/blog/a-hitchhikers-guide-to-solana-program-security"
+    },
+    {
+      "name": "Solana Program Security",
+      "url": "https://solana.com/developers/courses/program-security/security-intro"
+    }
+  ]
+} 
