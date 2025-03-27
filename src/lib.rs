@@ -1,7 +1,7 @@
 // Copyright (c) 2025 @calc1f4r
 // SPDX-License-Identifier: MIT
 
-//! # Solana Static Analyzer
+//! # Pluton
 //! 
 //! A static analysis tool for Solana and Anchor Rust programs that identifies
 //! common security vulnerabilities and best practices.
@@ -62,7 +62,7 @@ impl AnalysisResult {
         let mut report = String::new();
         
         // Summary section
-        report.push_str("# Solana Static Analysis Report\n\n");
+        report.push_str("# Pluton Analysis Report\n\n");
         report.push_str("## Summary\n\n");
         report.push_str(&format!("- **Critical Vulnerabilities**: {}\n", 
             self.vulnerabilities.iter().filter(|v| matches!(v.severity, Severity::Critical)).count()));

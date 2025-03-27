@@ -1,7 +1,7 @@
-use solana_static_analyzer::SolanaAnalyzer;
+use pluton::SolanaAnalyzer;
 use clap::Parser;
 
-/// Command line arguments for the Solana Static Analyzer
+/// Command line arguments for Pluton
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
@@ -29,7 +29,7 @@ fn main() -> anyhow::Result<()> {
     let analyzer = SolanaAnalyzer::new(args.project_path.clone());
     
     // Run the analysis
-    let mut result = analyzer.analyze()?;
+    let result = analyzer.analyze()?;
     
     println!("Loaded vulnerability descriptions: {}", result.vulnerability_descriptions.len());
     if !result.vulnerability_descriptions.is_empty() {
