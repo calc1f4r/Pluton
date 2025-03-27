@@ -16,6 +16,18 @@
       "description": "Improper validation during memory reallocation"
     },
     {
+      "id": "arbitrary_cpi",
+      "title": "Arbitrary CPI",
+      "severity": "Critical",
+      "description": "Failure to validate program IDs in cross-program invocations"
+    },
+    {
+      "id": "bump_seed_canonicalization",
+      "title": "Bump Seed Canonicalization",
+      "severity": "High",
+      "description": "Using non-canonical bump seeds for PDA derivation"
+    },
+    {
       "id": "missing_ownership_check",
       "title": "Missing Ownership Check",
       "severity": "Critical",
@@ -56,12 +68,6 @@
       "title": "Remaining Accounts",
       "severity": "High",
       "description": "Improper validation of accounts in the remaining_accounts vector"
-    },
-    {
-      "id": "bump_seed_canonicalization",
-      "title": "Bump Seed Canonicalization",
-      "severity": "High",
-      "description": "Using attacker-supplied bump seeds instead of canonical ones"
     },
     {
       "id": "loss_of_precision",

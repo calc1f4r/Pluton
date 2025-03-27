@@ -29,11 +29,19 @@ use crate::{AnalysisResult, Info, Location, Severity, Vulnerability, Warning};
 use quote::ToTokens;
 use syn::spanned::Spanned;
 use syn::{
-    BinOp, Expr, ExprBinary, ExprLit, Field, Item, ItemEnum, ItemFn, ItemStruct
+    BinOp, Expr, ExprBinary, ExprLit, Field, Item, ItemEnum, ItemFn, ItemStruct, Attribute, FnArg, Pat
 };
 use syn::visit::Visit;
 use std::collections::HashMap;
-use std::hash::Hash;
+use serde_json::Value;
+
+/// Represents a location in the source code
+#[derive(Default, Clone, Debug)]
+struct CodeLocation {
+    line: usize,
+    column: usize,
+    file: String,
+}
 
 /// Visitor that traverses a Solana/Anchor program's AST to detect vulnerabilities
 ///
@@ -66,9 +74,34 @@ pub struct AnchorVisitor<'ast> {
 
     /// Content of the current file being analyzed
     file_content: String,
+
+    /// Track if a CPI was performed in the current function
+    cpi_performed: bool,
+
+    /// Track expressions that access account data
+    accessed_accounts: Vec<String>,
+
+    // Add new fields to track bump seed usage
+    non_canonical_bump_detected: bool,
+    current_function_has_bump_param: bool,
+
+    /// Current location in the code being analyzed
+    current_location: CodeLocation,
     
-    /// Pre-computed map of node text to line numbers
-    node_line_map: HashMap<String, usize>,
+    /// List of warnings collected during analysis
+    warnings: Vec<Warning>,
+    
+    /// List of vulnerabilities collected during analysis
+    vulnerabilities: Vec<Vulnerability>,
+    
+    /// List of informational items collected during analysis
+    info: Vec<Info>,
+    
+    /// Flag indicating if initialization check was found in the current function
+    has_initialization_check: bool,
+    
+    /// Descriptions of known vulnerabilities
+    vulnerability_descriptions: HashMap<String, Value>,
 }
 
 impl<'ast> AnchorVisitor<'ast> {
@@ -94,9 +127,9 @@ impl<'ast> AnchorVisitor<'ast> {
             Err(_) => String::new(),
         };
         
-        // Pre-compute line numbers for common code constructs
-        let node_line_map = Self::build_line_map(&file_content);
+        let desc = super::utils::load_vulnerability_descriptions().unwrap_or_default();
         
+        // Create visitor with file content
         Self {
             result,
             current_file,
@@ -107,136 +140,21 @@ impl<'ast> AnchorVisitor<'ast> {
             has_remaining_accounts_validation: false,
             current_function_is_init: false,
             file_content,
-            node_line_map,
+            cpi_performed: false,
+            accessed_accounts: Vec::new(),
+            non_canonical_bump_detected: false,
+            current_function_has_bump_param: false,
+            vulnerability_descriptions: desc,
+            current_location: CodeLocation::default(),
+            warnings: Vec::new(),
+            vulnerabilities: Vec::new(),
+            info: Vec::new(),
+            has_initialization_check: false,
         }
     }
 
-    /// Builds a map from code snippets to their line numbers
-    fn build_line_map(content: &str) -> HashMap<String, usize> {
-        let mut map = HashMap::new();
-        
-        // Process line by line to build a map of code snippets to line numbers
-        for (line_idx, line) in content.lines().enumerate() {
-            // Skip empty or whitespace-only lines
-            if line.trim().is_empty() {
-                continue;
-            }
-            
-            // For each non-empty line, add multiple partial snippets to improve matching
-            let line_trimmed = line.trim();
-            
-            // Add the full line
-            map.insert(line_trimmed.to_string(), line_idx + 1);
-            
-            // Add function declarations
-            if line_trimmed.contains("fn ") && line_trimmed.contains("(") {
-                if let Some(fn_part) = line_trimmed.split("fn ").nth(1) {
-                    if let Some(name_part) = fn_part.split('(').next() {
-                        let fn_name = name_part.trim().to_string();
-                        if !fn_name.is_empty() {
-                            map.insert(fn_name, line_idx + 1);
-                        }
-                    }
-                }
-            }
-            
-            // Add struct declarations
-            if line_trimmed.contains("struct ") {
-                if let Some(struct_part) = line_trimmed.split("struct ").nth(1) {
-                    if let Some(name_part) = struct_part.split('{').next() {
-                        let struct_name = name_part.trim().to_string();
-                        if !struct_name.is_empty() {
-                            map.insert(struct_name, line_idx + 1);
-                        }
-                    }
-                }
-            }
-            
-            // Add field declarations
-            if line_trimmed.contains(":") && !line_trimmed.contains("fn ") {
-                if let Some(field_name) = line_trimmed.split(':').next() {
-                    let field_name_trimmed = field_name.trim().to_string();
-                    if !field_name_trimmed.is_empty() {
-                        map.insert(field_name_trimmed, line_idx + 1);
-                    }
-                }
-            }
-            
-            // Add binary operations
-            if line_trimmed.contains('+') || line_trimmed.contains('-') || 
-               line_trimmed.contains('*') || line_trimmed.contains('/') ||
-               line_trimmed.contains('%') {
-                map.insert(line_trimmed.to_string(), line_idx + 1);
-            }
-            
-            // Add literal expressions
-            if line_trimmed.contains("0x") || line_trimmed.chars().any(|c| c.is_digit(10)) {
-                map.insert(line_trimmed.to_string(), line_idx + 1);
-            }
-            
-            // Extract tokens to capture more granular code elements
-            let tokens: Vec<&str> = line_trimmed
-                .split(|c: char| !c.is_alphanumeric() && c != '_')
-                .filter(|s| !s.is_empty() && s.len() > 2)
-                .collect();
-            
-            for token in tokens {
-                map.insert(token.to_string(), line_idx + 1);
-            }
-        }
-        
-        map
-    }
-    
-    /// Updates the current source location based on a syntax node's span
-    fn update_location_from_span(&mut self, span: proc_macro2::Span) {
-        // First try to get the source text
-        if let Some(source_text) = span.source_text() {
-            // Ignore empty spans
-            if source_text.is_empty() || source_text.trim().is_empty() {
-                return;
-            }
-            
-            // Try direct lookup in the node map first (the efficient approach)
-            let trimmed_text = source_text.trim();
-            if let Some(&line) = self.node_line_map.get(trimmed_text) {
-                self.current_line = line;
-                self.current_column = 1; // Default column since we don't track exact columns
-                return;
-            }
-            
-            // Try looking up parts of the source text (handles complex expressions)
-            let parts: Vec<&str> = trimmed_text
-                .split(|c: char| !c.is_alphanumeric() && c != '_')
-                .filter(|s| !s.is_empty() && s.len() > 2)
-                .collect();
-                
-            for part in parts {
-                if let Some(&line) = self.node_line_map.get(part) {
-                    self.current_line = line;
-                    self.current_column = 1;
-                    return;
-                }
-            }
-            
-            // If we still can't find it, use the text search method as fallback
-            if let Some(pos) = self.file_content.find(trimmed_text) {
-                // Count newlines up to this position
-                let prefix = &self.file_content[..pos];
-                self.current_line = prefix.matches('\n').count() + 1;
-                
-                // Calculate column
-                if let Some(last_newline) = prefix.rfind('\n') {
-                    self.current_column = pos - last_newline;
-                } else {
-                    self.current_column = pos + 1;
-                }
-            }
-        }
-    }
+    // MARK: - Result Collection Methods
 
-    // MARK: - Location Tracking Methods
-    
     /// Adds a vulnerability finding to the analysis result
     ///
     /// # Arguments
@@ -245,20 +163,6 @@ impl<'ast> AnchorVisitor<'ast> {
     /// * `description` - Description of the vulnerability
     /// * `suggestion` - Suggested fix for the vulnerability
     fn add_vulnerability(&mut self, severity: Severity, description: String, suggestion: String) {
-        // Ensure we have a line number
-        if self.current_line == 0 {
-            // Try to find a line based on the description
-            if let Some(keyword) = description.split_whitespace().next() {
-                if let Some(pos) = self.file_content.find(keyword) {
-                    let prefix = &self.file_content[..pos];
-                    self.current_line = prefix.matches('\n').count() + 1;
-                } else {
-                    // Use fallback line number - by default use line 1, but this should be rare
-                    self.current_line = 1;
-                }
-            }
-        }
-        
         self.result.vulnerabilities.push(Vulnerability {
             severity,
             description,
@@ -278,20 +182,6 @@ impl<'ast> AnchorVisitor<'ast> {
     /// * `description` - Description of the warning
     /// * `suggestion` - Suggested improvement
     fn add_warning(&mut self, description: String, suggestion: String) {
-        // Ensure we have a line number
-        if self.current_line == 0 {
-            // Try to find a line based on the description
-            if let Some(keyword) = description.split_whitespace().next() {
-                if let Some(pos) = self.file_content.find(keyword) {
-                    let prefix = &self.file_content[..pos];
-                    self.current_line = prefix.matches('\n').count() + 1;
-                } else {
-                    // Use fallback line number
-                    self.current_line = 1;
-                }
-            }
-        }
-        
         self.result.warnings.push(Warning {
             description,
             location: Location {
@@ -309,20 +199,6 @@ impl<'ast> AnchorVisitor<'ast> {
     ///
     /// * `description` - Description of the informational item
     fn add_info(&mut self, description: String) {
-        // Ensure we have a line number
-        if self.current_line == 0 {
-            // Try to find a line based on the description
-            if let Some(keyword) = description.split_whitespace().next() {
-                if let Some(pos) = self.file_content.find(keyword) {
-                    let prefix = &self.file_content[..pos];
-                    self.current_line = prefix.matches('\n').count() + 1;
-                } else {
-                    // Use fallback line number
-                    self.current_line = 1;
-                }
-            }
-        }
-        
         self.result.info.push(Info {
             description,
             location: Location {
@@ -331,6 +207,32 @@ impl<'ast> AnchorVisitor<'ast> {
                 column: self.current_column,
             },
         });
+    }
+
+    /// Updates the current source location based on a syntax node's span
+    ///
+    /// # Arguments
+    ///
+    /// * `span` - The syntax node span from which to extract location information
+    fn update_location_from_span(&mut self, span: proc_macro2::Span) {
+        // Get the source text from the span
+        if let Some(source_text) = span.source_text() {
+            // Find all occurrences of this text in the file
+            let mut line_number = 1;
+            let mut last_pos = 0;
+            
+            while let Some(pos) = self.file_content[last_pos..].find(&source_text) {
+                let actual_pos = last_pos + pos;
+                let prefix = &self.file_content[..actual_pos];
+                line_number = prefix.chars().filter(|&c| c == '\n').count() + 1;
+                last_pos = actual_pos + 1;
+            }
+            
+            // Update line number if we found a match
+            if last_pos > 0 {
+                self.current_line = line_number;
+            }
+        }
     }
 
     // MARK: - Function Analysis Methods
@@ -351,25 +253,12 @@ impl<'ast> AnchorVisitor<'ast> {
         // Update location from function span
         self.update_location_from_span(item_fn.span());
         
-        // Update location from function name span if available
-        self.update_location_from_span(item_fn.sig.ident.span());
-        
-        // Get function name for heuristic checks
-        let fn_name = item_fn.sig.ident.to_string();
-        
-        // Force line numbers for specific constructs
-        if self.current_line == 0 {
-            // Look in the code for the function definition directly
-            let pattern = format!("fn {}(", fn_name);
-            if let Some(pos) = self.file_content.find(&pattern) {
-                let prefix = &self.file_content[..pos];
-                self.current_line = prefix.matches('\n').count() + 1;
-            }
-        }
-        
         // Reset state for this function
         self.has_remaining_accounts_access = false;
         self.has_remaining_accounts_validation = false;
+        
+        // Get function name for heuristic checks
+        let fn_name = item_fn.sig.ident.to_string();
         
         // Check if this is an initialization function based on naming convention
         self.current_function_is_init = fn_name.contains("initialize") 
@@ -378,6 +267,20 @@ impl<'ast> AnchorVisitor<'ast> {
         
         // Various function name-based heuristic checks
         self.check_function_naming_conventions(&fn_name);
+
+        // Check function parameters for bump arguments
+        self.current_function_has_bump_param = false;
+        for param in &item_fn.sig.inputs {
+            if let FnArg::Typed(pat_type) = param {
+                if let Pat::Ident(pat_ident) = &*pat_type.pat {
+                    let param_name = pat_ident.ident.to_string();
+                    if param_name.contains("bump") {
+                        self.current_function_has_bump_param = true;
+                        break;
+                    }
+                }
+            }
+        }
 
         // Visit the function body to analyze its contents
         syn::visit::visit_block(self, &item_fn.block);
@@ -398,6 +301,35 @@ impl<'ast> AnchorVisitor<'ast> {
         
         // Reset current function state
         self.current_function_is_init = false;
+
+        // Reset CPI tracking at the beginning of a function
+        self.cpi_performed = false;
+        self.accessed_accounts.clear();
+
+        // Check if account data was accessed after CPI without reload
+        if self.cpi_performed && !self.accessed_accounts.is_empty() {
+            self.add_vulnerability(
+                Severity::Critical,
+                "Account data accessed after CPI without reload()".to_string(),
+                "After performing a CPI, call account.reload() before accessing account data to prevent tampering. Other programs can modify account data during a CPI.".to_string(),
+            );
+        }
+        
+        // Reset CPI tracking for the next function
+        self.cpi_performed = false;
+        self.accessed_accounts.clear();
+
+        // Reset bump detection state at the end of the function
+        if self.non_canonical_bump_detected && self.current_function_has_bump_param {
+            self.add_vulnerability(
+                Severity::Critical,
+                "Possible bump seed canonicalization vulnerability detected".to_string(),
+                "Always use Pubkey::find_program_address() instead of create_program_address() to ensure canonical bump is used, or validate any user-provided bump against the canonical bump.".to_string(),
+            );
+        }
+        
+        self.non_canonical_bump_detected = false;
+        self.current_function_has_bump_param = false;
     }
     
     /// Checks for issues based on function naming conventions
@@ -468,21 +400,8 @@ impl<'ast> AnchorVisitor<'ast> {
         // Update location from struct span
         self.update_location_from_span(item_struct.span());
         
-        // Update location from struct name span if available
-        self.update_location_from_span(item_struct.ident.span());
-        
         // Get struct name for pattern matching
         let struct_name = item_struct.ident.to_string();
-        
-        // Force line numbers for specific constructs
-        if self.current_line == 0 {
-            // Look in the code for the struct definition directly
-            let pattern = format!("struct {}", struct_name);
-            if let Some(pos) = self.file_content.find(&pattern) {
-                let prefix = &self.file_content[..pos];
-                self.current_line = prefix.matches('\n').count() + 1;
-            }
-        }
         
         // Check if this is an Anchor Accounts struct
         let is_accounts_struct = item_struct.attrs.iter().any(|attr| {
@@ -557,24 +476,6 @@ impl<'ast> AnchorVisitor<'ast> {
         let field_name = field.ident
             .as_ref()
             .map_or("unnamed".to_string(), |id| id.to_string());
-            
-        // Force line numbers for specific fields
-        if self.current_line == 0 && !field_name.is_empty() {
-            // Look for field declarations with matching name
-            let patterns = vec![
-                format!("{}: ", field_name),
-                format!("pub {}: ", field_name),
-                format!("{},", field_name),
-            ];
-            
-            for pattern in patterns {
-                if let Some(pos) = self.file_content.find(&pattern) {
-                    let prefix = &self.file_content[..pos];
-                    self.current_line = prefix.matches('\n').count() + 1;
-                    break;
-                }
-            }
-        }
         
         // Check for different account types
         self.check_account_info_field(field, &field_type, &field_name, struct_name);
@@ -611,11 +512,33 @@ impl<'ast> AnchorVisitor<'ast> {
                     || attr_str.contains("owner")
             });
             
+            // Check if it's likely a program account based on name
+            let is_program_account = field_name.contains("program") 
+                || field_name.contains("Program") 
+                || field_name.ends_with("_program")
+                || field_name.ends_with("_Program");
+            
             if !has_constraints {
-                self.add_vulnerability(
-                    Severity::High,
-                    format!("Unchecked AccountInfo in struct {}: field {}", struct_name, field_name),
-                    "Add proper constraints to AccountInfo fields using Anchor attributes (e.g., #[account(...)]).".to_string(),
+                // If this appears to be a program account, it's a critical arbitrary CPI risk
+                if is_program_account {
+                    self.add_vulnerability(
+                        Severity::Critical,
+                        format!("Unchecked program AccountInfo in struct {}: field {} - potential arbitrary CPI vulnerability", struct_name, field_name),
+                        "Use Program<'info, T> instead of AccountInfo for program accounts to automatically validate program IDs, or add explicit validation checks.".to_string(),
+                    );
+                } else {
+                    // General unconstrained AccountInfo warning
+                    self.add_vulnerability(
+                        Severity::High,
+                        format!("Unchecked AccountInfo in struct {}: field {}", struct_name, field_name),
+                        "Add proper constraints to AccountInfo fields using Anchor attributes (e.g., #[account(...)]).".to_string(),
+                    );
+                }
+            } else if is_program_account {
+                // Even with some constraints, program accounts need specific checks
+                self.add_warning(
+                    format!("Program account {} uses AccountInfo - consider stronger validation", field_name),
+                    "Use Program<'info, T> or add explicit program ID verification in your code.".to_string(),
                 );
             }
         }
@@ -642,6 +565,13 @@ impl<'ast> AnchorVisitor<'ast> {
             
             // Check for proper initialization constraints
             self.check_account_init_constraints(field, field_name, struct_name);
+        }
+
+        // Check field attributes for PDA derivation issues
+        for attr in &field.attrs {
+            if attr.path().is_ident("account") {
+                self.check_anchor_account_attribute(attr);
+            }
         }
     }
     
@@ -915,6 +845,18 @@ impl<'ast> AnchorVisitor<'ast> {
         match expr {
             Expr::Field(field_expr) => {
                 self.update_location_from_span(field_expr.span());
+                
+                // If this accesses account data after a CPI, track it to warn about possible account data tampering
+                if self.cpi_performed {
+                    let field_str = field_expr.to_token_stream().to_string();
+                    
+                    // Only track if it's not a reload() call, which would be safe
+                    if !field_str.contains("reload") {
+                        self.accessed_accounts.push(field_str.clone());
+                    }
+                }
+                
+                // Check for remaining_accounts access (existing code)
                 if let Expr::Path(_path_expr) = &*field_expr.base {
                     let member_str = field_expr.member.to_token_stream().to_string();
                     if member_str == "remaining_accounts" {
@@ -925,13 +867,30 @@ impl<'ast> AnchorVisitor<'ast> {
             }
             Expr::MethodCall(method_call) => {
                 self.update_location_from_span(method_call.span());
+                let method_name = method_call.method.to_string();
                 let receiver_str = method_call.receiver.to_token_stream().to_string();
+                
+                // If a CPI was performed and this is not a reload() call, track it as potential unsafe access
+                if self.cpi_performed && method_name != "reload" {
+                    self.accessed_accounts.push(receiver_str.clone());
+                }
+                
+                // Check for remaining_accounts access (existing code)
                 if receiver_str.contains("remaining_accounts") {
                     // Found a method call on remaining_accounts
                     self.has_remaining_accounts_access = true;
                 }
+                
+                // Look for create_program_address calls
+                if method_name == "create_program_address" {
+                    // Check if this is in a function that has a bump parameter
+                    if self.current_function_has_bump_param {
+                        // This might be a non-canonical bump usage
+                        self.non_canonical_bump_detected = true;
+                    }
+                }
             }
-            // Look for direct AccountInfo usage without validation
+            // Look for cast expressions
             Expr::Cast(cast_expr) => {
                 self.update_location_from_span(cast_expr.span());
                 let target_type = cast_expr.ty.to_token_stream().to_string();
@@ -946,14 +905,77 @@ impl<'ast> AnchorVisitor<'ast> {
             Expr::Call(call_expr) => {
                 self.update_location_from_span(call_expr.span());
                 let func_str = call_expr.func.to_token_stream().to_string();
+                
+                // Mark that a CPI was performed if this is an invoke or CpiContext usage
+                if func_str.contains("invoke") || func_str.contains("invoke_signed") || func_str.contains("CpiContext") {
+                    self.cpi_performed = true;
+                }
+                
+                // Check for direct invoke or invoke_signed calls which may indicate arbitrary CPI
                 if func_str.contains("invoke") || func_str.contains("invoke_signed") {
+                    // This is a stronger warning since it's a direct Solana CPI which needs careful handling
+                    self.add_vulnerability(
+                        Severity::Critical,
+                        "Potential arbitrary CPI vulnerability detected".to_string(),
+                        "Verify the program ID of the target program before invoking a cross-program call. Use `if target_program.key() != expected_program_id { return Err(...) }` to validate.".to_string(),
+                    );
+                }
+                
+                // Check for CPI context creation that might lead to arbitrary CPI
+                if func_str.contains("CpiContext") {
+                    // This is a general warning as it's a common pattern that needs validation
                     self.add_warning(
-                        "Cross-Program Invocation detected - ensure proper account validation".to_string(),
-                        "Validate all accounts passed to the CPI before invoking".to_string(),
+                        "Cross-Program Invocation detected - ensure proper program validation".to_string(),
+                        "Validate the program ID and all accounts passed to the CPI before invoking. Use Program<'info, T> instead of AccountInfo for program accounts.".to_string(),
+                    );
+                }
+                
+                // Look for Pubkey::create_program_address without finding canonical bump first
+                if func_str.contains("create_program_address") && !func_str.contains("find_program_address") {
+                    // This is a potential bump seed canonicalization issue
+                    self.add_warning(
+                        "Using create_program_address directly may lead to non-canonical bump usage".to_string(),
+                        "Use find_program_address to get the canonical bump first, or validate that you're using the canonical bump.".to_string(),
                     );
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Checks anchor account attribute for bump usage
+    fn check_anchor_account_attribute(&mut self, attr: &Attribute) {
+        if !attr.path().is_ident("account") {
+            return;
+        }
+        
+        let attr_str = attr.to_token_stream().to_string();
+        
+        // Check for seeds without bump, which could indicate manual bump handling
+        if attr_str.contains("seeds") && !attr_str.contains("bump") {
+            self.add_warning(
+                "PDA seeds constraint without bump constraint".to_string(),
+                "When using the seeds constraint, also specify a bump constraint to ensure canonical bump is used.".to_string(),
+            );
+        }
+        
+        // Check for explicit bump value that might not be canonical
+        if attr_str.contains("bump =") && !attr_str.contains("bump = bump") && !attr_str.contains("bump = data.bump") {
+            // This could be a hardcoded non-canonical bump
+            if attr_str.contains("bump = 0") || 
+               attr_str.contains("bump = 1") || 
+               attr_str.contains("bump = 2") {
+                self.add_vulnerability(
+                    Severity::Critical,
+                    "Hardcoded non-canonical bump value detected".to_string(),
+                    "Using a hardcoded bump value risks using a non-canonical bump. Use bump without a value to derive canonical bump, or use bump = data.bump to reference stored canonical bump.".to_string(),
+                );
+            } else {
+                self.add_warning(
+                    "Custom bump value in anchor constraint".to_string(),
+                    "Ensure this bump value is the canonical bump, preferably stored from find_program_address() result.".to_string(),
+                );
+            }
         }
     }
 }
