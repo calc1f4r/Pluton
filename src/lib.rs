@@ -61,31 +61,229 @@ impl AnalysisResult {
     pub fn to_markdown(&self) -> String {
         let mut report = String::new();
         
-        // Summary section
-        report.push_str("# Pluton Analysis Report\n\n");
-        report.push_str("## Summary\n\n");
-        report.push_str(&format!("- **Critical Vulnerabilities**: {}\n", 
-            self.vulnerabilities.iter().filter(|v| matches!(v.severity, Severity::Critical)).count()));
-        report.push_str(&format!("- **High Severity Vulnerabilities**: {}\n", 
-            self.vulnerabilities.iter().filter(|v| matches!(v.severity, Severity::High)).count()));
-        report.push_str(&format!("- **Warnings**: {}\n", self.warnings.len()));
-        report.push_str(&format!("- **Informational Items**: {}\n\n", self.info.len()));
+        // Title and Report Information
+        report.push_str("# Solana Smart Contract Security Audit Report\n\n");
         
-        // Vulnerabilities section
+        // Add date
+        let now = chrono::Local::now();
+        report.push_str(&format!("**Date**: {}\n\n", now.format("%Y-%m-%d")));
+        
+        // Add version
+        report.push_str("**Version**: 1.0\n\n");
+
+        // Executive Summary
+        report.push_str("## Executive Summary\n\n");
+        report.push_str("This report presents the findings of a security audit performed on the provided Solana/Anchor smart contract code. ");
+        report.push_str("The audit was conducted using automated static analysis tools focusing on common security vulnerabilities and best practices in Solana development.\n\n");
+        
+        // Risk Classification
+        report.push_str("### Risk Classification\n\n");
+        report.push_str("| Severity | Description |\n");
+        report.push_str("|----------|-------------|\n");
+        report.push_str("| **Critical** | Vulnerabilities that can lead to loss of funds, unauthorized access to funds, or complete compromise of the contract or user accounts |\n");
+        report.push_str("| **High** | Vulnerabilities that can lead to degraded security or loss of funds under specific circumstances |\n");
+        report.push_str("| **Medium** | Vulnerabilities that can impact the contract's intended functionality but do not directly lead to loss of funds |\n");
+        report.push_str("| **Low** | Issues that do not pose a significant risk but should be addressed as best practice |\n");
+        report.push_str("| **Informational** | Suggestions to improve code quality, gas efficiency, or enhance documentation |\n\n");
+        
+        // Scope
+        report.push_str("### Scope\n\n");
+        report.push_str("The audit covers the Rust/Anchor program code in the provided project directories.\n\n");
+        
+        // Audit Statistics
+        report.push_str("### Audit Statistics\n\n");
+        
+        let critical_count = self.vulnerabilities.iter().filter(|v| matches!(v.severity, Severity::Critical)).count();
+        let high_count = self.vulnerabilities.iter().filter(|v| matches!(v.severity, Severity::High)).count();
+        let medium_count = self.vulnerabilities.iter().filter(|v| matches!(v.severity, Severity::Medium)).count();
+        let low_count = self.vulnerabilities.iter().filter(|v| matches!(v.severity, Severity::Low)).count();
+        
+        report.push_str("| Risk Level | Count |\n");
+        report.push_str("|------------|-------|\n");
+        report.push_str(&format!("| Critical | {} |\n", critical_count));
+        report.push_str(&format!("| High | {} |\n", high_count));
+        report.push_str(&format!("| Medium | {} |\n", medium_count));
+        report.push_str(&format!("| Low | {} |\n", low_count));
+        report.push_str(&format!("| Warnings | {} |\n", self.warnings.len()));
+        report.push_str(&format!("| Informational | {} |\n\n", self.info.len()));
+        
+        // Table of Contents
+        report.push_str("## Table of Contents\n\n");
+        
+        report.push_str("1. [Executive Summary](#executive-summary)\n");
+        report.push_str("2. [Findings Overview](#findings-overview)\n");
+        
         if !self.vulnerabilities.is_empty() {
-            report.push_str("## Vulnerabilities\n\n");
+            report.push_str("3. [Detailed Findings](#detailed-findings)\n");
             
-            // Critical first, then High
+            // Create sub-sections in TOC for each severity
+            let mut section_index = 1;
+            
+            if critical_count > 0 {
+                report.push_str(&format!("   3.{} [Critical Severity Issues](#critical-severity-issues)\n", section_index));
+                section_index += 1;
+                
+                // List each critical issue in TOC
+                let critical_vulns: Vec<&Vulnerability> = self.vulnerabilities.iter()
+                    .filter(|v| matches!(v.severity, Severity::Critical))
+                    .collect();
+                
+                for (i, vuln) in critical_vulns.iter().enumerate() {
+                    let anchor = vuln.description.to_lowercase().replace(' ', "-").replace(['(', ')', ':', '.', ',', '\'', '"'], "");
+                    report.push_str(&format!("      - [{}](#{})\n", vuln.description, anchor));
+                }
+            }
+            
+            if high_count > 0 {
+                report.push_str(&format!("   3.{} [High Severity Issues](#high-severity-issues)\n", section_index));
+                section_index += 1;
+                
+                // List each high issue in TOC
+                let high_vulns: Vec<&Vulnerability> = self.vulnerabilities.iter()
+                    .filter(|v| matches!(v.severity, Severity::High))
+                    .collect();
+                
+                for (i, vuln) in high_vulns.iter().enumerate() {
+                    let anchor = vuln.description.to_lowercase().replace(' ', "-").replace(['(', ')', ':', '.', ',', '\'', '"'], "");
+                    report.push_str(&format!("      - [{}](#{})\n", vuln.description, anchor));
+                }
+            }
+            
+            if medium_count > 0 {
+                report.push_str(&format!("   3.{} [Medium Severity Issues](#medium-severity-issues)\n", section_index));
+                section_index += 1;
+                
+                // List each medium issue in TOC
+                let medium_vulns: Vec<&Vulnerability> = self.vulnerabilities.iter()
+                    .filter(|v| matches!(v.severity, Severity::Medium))
+                    .collect();
+                
+                for (i, vuln) in medium_vulns.iter().enumerate() {
+                    let anchor = vuln.description.to_lowercase().replace(' ', "-").replace(['(', ')', ':', '.', ',', '\'', '"'], "");
+                    report.push_str(&format!("      - [{}](#{})\n", vuln.description, anchor));
+                }
+            }
+            
+            if low_count > 0 {
+                report.push_str(&format!("   3.{} [Low Severity Issues](#low-severity-issues)\n", section_index));
+                section_index += 1;
+                
+                // List each low issue in TOC
+                let low_vulns: Vec<&Vulnerability> = self.vulnerabilities.iter()
+                    .filter(|v| matches!(v.severity, Severity::Low))
+                    .collect();
+                
+                for (i, vuln) in low_vulns.iter().enumerate() {
+                    let anchor = vuln.description.to_lowercase().replace(' ', "-").replace(['(', ')', ':', '.', ',', '\'', '"'], "");
+                    report.push_str(&format!("      - [{}](#{})\n", vuln.description, anchor));
+                }
+            }
+        }
+        
+        if !self.warnings.is_empty() {
+            report.push_str("4. [Warnings](#warnings)\n");
+        }
+        
+        if !self.info.is_empty() {
+            report.push_str("5. [Informational Items](#informational-items)\n");
+        }
+        
+        report.push_str("6. [Conclusion](#conclusion)\n\n");
+        
+        // Findings Overview
+        report.push_str("## Findings Overview\n\n");
+        report.push_str("The following chart summarizes the issues found during the audit:\n\n");
+        
+        if !self.vulnerabilities.is_empty() || !self.warnings.is_empty() {
+            report.push_str("| ID | Title | Severity | Status |\n");
+            report.push_str("|----|--------------------|----------|--------|\n");
+            
+            let mut index = 1;
+            
+            // Critical vulnerabilities first
+            for vuln in self.vulnerabilities.iter().filter(|v| matches!(v.severity, Severity::Critical)) {
+                let issue_id = format!("CRIT-{:03}", index);
+                report.push_str(&format!("| {} | {} | Critical | Open |\n", issue_id, vuln.description));
+                index += 1;
+            }
+            
+            // Reset index for High
+            index = 1;
+            
+            // High vulnerabilities next
+            for vuln in self.vulnerabilities.iter().filter(|v| matches!(v.severity, Severity::High)) {
+                let issue_id = format!("HIGH-{:03}", index);
+                report.push_str(&format!("| {} | {} | High | Open |\n", issue_id, vuln.description));
+                index += 1;
+            }
+            
+            // Reset index for Medium
+            index = 1;
+            
+            // Medium vulnerabilities next
+            for vuln in self.vulnerabilities.iter().filter(|v| matches!(v.severity, Severity::Medium)) {
+                let issue_id = format!("MED-{:03}", index);
+                report.push_str(&format!("| {} | {} | Medium | Open |\n", issue_id, vuln.description));
+                index += 1;
+            }
+            
+            // Reset index for Low
+            index = 1;
+            
+            // Low vulnerabilities next
+            for vuln in self.vulnerabilities.iter().filter(|v| matches!(v.severity, Severity::Low)) {
+                let issue_id = format!("LOW-{:03}", index);
+                report.push_str(&format!("| {} | {} | Low | Open |\n", issue_id, vuln.description));
+                index += 1;
+            }
+            
+            // Reset index for Warnings
+            index = 1;
+            
+            // Warnings last
+            for warning in &self.warnings {
+                let issue_id = format!("WARN-{:03}", index);
+                report.push_str(&format!("| {} | {} | Warning | Open |\n", issue_id, warning.description));
+                index += 1;
+            }
+        } else {
+            report.push_str("No issues were found during the audit.\n\n");
+        }
+        
+        // Detailed Findings
+        if !self.vulnerabilities.is_empty() {
+            report.push_str("\n## Detailed Findings\n\n");
+            
+            // Critical first, then High, Medium, Low
             for severity in [Severity::Critical, Severity::High, Severity::Medium, Severity::Low] {
                 let severity_vulns: Vec<&Vulnerability> = self.vulnerabilities.iter()
                     .filter(|v| v.severity == severity)
                     .collect();
                 
                 if !severity_vulns.is_empty() {
-                    report.push_str(&format!("### {} Severity\n\n", severity));
+                    match severity {
+                        Severity::Critical => report.push_str("### Critical Severity Issues\n\n"),
+                        Severity::High => report.push_str("### High Severity Issues\n\n"),
+                        Severity::Medium => report.push_str("### Medium Severity Issues\n\n"),
+                        Severity::Low => report.push_str("### Low Severity Issues\n\n"),
+                    }
+                    
+                    let mut index = 1;
                     
                     for vuln in severity_vulns {
-                        report.push_str(&format!("#### {}\n\n", vuln.description));
+                        // Create issue ID based on severity
+                        let issue_id = match severity {
+                            Severity::Critical => format!("CRIT-{:03}", index),
+                            Severity::High => format!("HIGH-{:03}", index),
+                            Severity::Medium => format!("MED-{:03}", index),
+                            Severity::Low => format!("LOW-{:03}", index),
+                        };
+                        
+                        // Create anchor ID from description
+                        let anchor = vuln.description.to_lowercase().replace(' ', "-").replace(['(', ')', ':', '.', ',', '\'', '"'], "");
+                        
+                        // Add heading with anchor for linking
+                        report.push_str(&format!("#### <a name=\"{}\"></a>{}: {}\n\n", anchor, issue_id, vuln.description));
                         
                         // Try to find a detailed description in our database
                         let key_words: Vec<&str> = vuln.description.split_whitespace()
@@ -93,28 +291,55 @@ impl AnalysisResult {
                             .collect();
                         
                         // Try to find matching vulnerability description
+                        let mut found_details = false;
                         for key in key_words.iter() {
                             if let Some(desc) = utils::find_vulnerability_description(key.to_lowercase().as_str(), &self.vulnerability_descriptions) {
                                 if let Some(detailed_desc) = desc["description"].as_str() {
-                                    report.push_str(&format!("**Detailed Description**:\n{}\n\n", detailed_desc));
+                                    report.push_str("**Description**:\n\n");
+                                    report.push_str(&format!("{}\n\n", detailed_desc));
                                 }
                                 
                                 if let Some(example) = desc["example_scenario"].as_str() {
-                                    report.push_str(&format!("**Example Scenario**:\n{}\n\n", example));
+                                    report.push_str("**Example Scenario**:\n\n");
+                                    report.push_str(&format!("{}\n\n", example));
                                 }
                                 
+                                found_details = true;
                                 break;
                             }
                         }
                         
-                        report.push_str(&format!("**Location**: {}:{}:{}\n\n", vuln.location.file, vuln.location.line, vuln.location.column));
-                        report.push_str(&format!("**Suggestion**: {}\n\n", vuln.suggestion));
+                        // If no detailed description was found, use the basic description
+                        if !found_details {
+                            report.push_str("**Description**:\n\n");
+                            report.push_str(&format!("{}\n\n", vuln.description));
+                        }
+                        
+                        // Add technical details section
+                        report.push_str("**Technical Details**:\n\n");
+                        report.push_str("**File**: `");
+                        report.push_str(&vuln.location.file);
+                        report.push_str("`\n\n");
+                        report.push_str(&format!("**Line Number**: {}\n\n", vuln.location.line));
+                        
+                        // Add impact section
+                        report.push_str("**Impact**:\n\n");
+                        match severity {
+                            Severity::Critical => report.push_str("This vulnerability poses an immediate risk of fund loss or complete security compromise.\n\n"),
+                            Severity::High => report.push_str("This vulnerability can lead to significant security issues or potential fund loss under certain conditions.\n\n"),
+                            Severity::Medium => report.push_str("This vulnerability affects the contract's functionality but doesn't directly lead to fund loss.\n\n"),
+                            Severity::Low => report.push_str("This vulnerability represents a minor risk but should be addressed as a best practice.\n\n"),
+                        }
+                        
+                        // Add recommendation section
+                        report.push_str("**Recommendation**:\n\n");
+                        report.push_str(&format!("{}\n\n", vuln.suggestion));
                         
                         // Add secure code example from vulnerability database if available
                         for key in key_words.iter() {
                             if let Some(desc) = utils::find_vulnerability_description(key.to_lowercase().as_str(), &self.vulnerability_descriptions) {
                                 if let Some(secure_example) = desc["secure_example"].as_str() {
-                                    report.push_str("**Secure Implementation Example**:\n");
+                                    report.push_str("**Secure Implementation Example**:\n\n");
                                     report.push_str("```rust\n");
                                     report.push_str(secure_example);
                                     report.push_str("\n```\n\n");
@@ -124,6 +349,7 @@ impl AnalysisResult {
                         }
                         
                         report.push_str("---\n\n");
+                        index += 1;
                     }
                 }
             }
@@ -132,24 +358,56 @@ impl AnalysisResult {
         // Warnings section
         if !self.warnings.is_empty() {
             report.push_str("## Warnings\n\n");
+            report.push_str("The following warnings represent code quality issues or potential vulnerabilities that might require attention:\n\n");
+            
+            let mut index = 1;
             
             for warning in &self.warnings {
-                report.push_str(&format!("### {}\n\n", warning.description));
-                report.push_str(&format!("**Location**: {}:{}:{}\n\n", warning.location.file, warning.location.line, warning.location.column));
-                report.push_str(&format!("**Suggestion**: {}\n\n", warning.suggestion));
+                let issue_id = format!("WARN-{:03}", index);
+                let anchor = warning.description.to_lowercase().replace(' ', "-").replace(['(', ')', ':', '.', ',', '\'', '"'], "");
+                
+                report.push_str(&format!("### <a name=\"{}\"></a>{}: {}\n\n", anchor, issue_id, warning.description));
+                report.push_str("**File**: `");
+                report.push_str(&warning.location.file);
+                report.push_str("`\n\n");
+                report.push_str(&format!("**Line Number**: {}\n\n", warning.location.line));
+                report.push_str("**Recommendation**:\n\n");
+                report.push_str(&format!("{}\n\n", warning.suggestion));
                 report.push_str("---\n\n");
+                
+                index += 1;
             }
         }
         
         // Informational section
         if !self.info.is_empty() {
             report.push_str("## Informational Items\n\n");
+            report.push_str("The following items are informational and do not represent security issues, but may be useful for improving code quality or understanding:\n\n");
             
-            for info in &self.info {
-                report.push_str(&format!("- **{}** ({}:{}:{})\n", 
-                    info.description, info.location.file, info.location.line, info.location.column));
+            for (i, info) in self.info.iter().enumerate() {
+                report.push_str(&format!("{}. **{}**  \n", i + 1, info.description));
+                report.push_str(&format!("   File: `{}`, Line: {}\n\n", info.location.file, info.location.line));
             }
         }
+        
+        // Conclusion section
+        report.push_str("## Conclusion\n\n");
+        
+        if !self.vulnerabilities.is_empty() {
+            if critical_count > 0 {
+                report.push_str("**Critical security issues were found that require immediate attention.**\n\n");
+            } else if high_count > 0 {
+                report.push_str("**High severity issues were found that should be addressed before deployment.**\n\n");
+            } else {
+                report.push_str("**Some issues were found that should be addressed to improve the security of the contract.**\n\n");
+            }
+        } else if !self.warnings.is_empty() {
+            report.push_str("**No vulnerabilities were found, but some warnings should be addressed to improve code quality.**\n\n");
+        } else {
+            report.push_str("**No issues were found. The contract appears to be secure based on this static analysis.**\n\n");
+        }
+        
+        report.push_str("This audit was performed using automated static analysis tools and does not guarantee the absence of all possible vulnerabilities. A comprehensive security audit should also include manual code review and dynamic testing.\n\n");
         
         report
     }
