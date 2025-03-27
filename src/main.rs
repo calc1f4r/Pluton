@@ -30,11 +30,7 @@ fn main() -> anyhow::Result<()> {
     
     // Run the analysis
     let result = analyzer.analyze()?;
-    
-    println!("Loaded vulnerability descriptions: {}", result.vulnerability_descriptions.len());
-    if !result.vulnerability_descriptions.is_empty() {
-        println!("Found descriptions: {:?}", result.vulnerability_descriptions.keys().collect::<Vec<_>>());
-    }
+
     
     // Generate and output the report
     match args.format.as_str() {
